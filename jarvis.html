@@ -205,9 +205,12 @@ function askKB(q){
 const STOP=new Set("och det att i en är som på de av för med till den har inte om ett vad vem hur var när vilken vilket vilka kan jag du mig dig finns heter då så men eller från ska vara blev bli".split(" "));
 const ct=s=>tok(s).filter(w=>w!='num'&&!STOP.has(w)&&w.length>2);
 async function wiki(topic,deep){
+  topic=topic.replace(/^(om|på|upp)\s+/i,'').trim();
   const api='https://sv.wikipedia.org/w/api.php?format=json&origin=*&';
-  const s=await(await fetch(api+'action=query&list=search&srlimit='+(deep?4:1)+'&srsearch='+encodeURIComponent(topic))).json();
-  const hits=s.query.search;if(!hits.length)return null;
+  const s=await(await fetch(api+'action=query&list=search&srlimit='+(deep?8:1)+'&srsearch='+encodeURIComponent(topic))).json();
+  let hits=s.query.search;if(!hits.length)return null;
+  const tw=ct(topic);const rel=h=>ct(h.title).some(y=>tw.some(w=>near(y,w)));
+  let off=false;const good=hits.filter(rel);if(good.length)hits=good.slice(0,deep?4:1);else{off=true;hits=hits.slice(0,1)}
   let all=[];
   for(let i=0;i<hits.length;i++){
     $('#heard').textContent='Läser '+hits[i].title+' ('+(i+1)+'/'+hits.length+')…';
@@ -216,7 +219,7 @@ async function wiki(topic,deep){
     const txt=(p.extract||'').replace(/==+[^=]+==+/g,' ').replace(/\s+/g,' ');
     all=all.concat((txt.match(/[^.!?]+[.!?]+/g)||[]).map(x=>x.trim()).filter(x=>x.length>25));
   }
-  return{title:hits[0].title,s:all.slice(0,deep?220:40),n:hits.length};
+  return{title:hits[0].title,s:all.slice(0,deep?220:40),n:hits.length,off};
 }
 const near=(a,b)=>a.startsWith(b.slice(0,5))||b.startsWith(a.slice(0,5));
 function askStudied(q){
@@ -251,7 +254,7 @@ function think(raw){
   if((m=/^(?:studera|undersök|lär dig om|läs på om)\s+(.+)/i.exec(text)))
     return wiki(m[1],true).then(r=>{if(!r||!r.s.length)return'I could not find anything on that, '+who()+'.';
       mem.studied[r.title]={s:r.s};save();
-      return[[`Study complete, ${who()}. I have read ${r.n} articles, ${r.s.length} facts, about `,'en-GB'],[r.title+'. ','sv-SE']]})
+      return[[`${r.off?'I found no exact match, so I studied the closest one. ':''}Study complete, ${who()}. I have read ${r.n} articles, ${r.s.length} facts, about `,'en-GB'],[r.title+'. ','sv-SE']]})
       .catch(()=>'I cannot reach the internet, '+who()+'.');
   if(/vad har du (studerat|lärt dig)|^vad vet du\s*$/i.test(text)){const k=Object.keys(mem.studied);return k.length?[['I have studied: ','en-GB'],[k.join(', ')+'. ','sv-SE']]:'I have not studied anything yet, '+who()+'.'}
   if(/^(glöm allt|rensa minnet|glöm vad jag sa)/i.test(text)){mem.facts=[];mem.taught=[];mem.extra={};mem.studied={};save();train();return'Memory cleared, '+who()+'.'}
@@ -267,7 +270,7 @@ function think(raw){
   if(c&&c.p>.5&&H[c.label]){
     if(c.p>.9){const a=mem.extra[c.label]=mem.extra[c.label]||[];if(!a.includes(text.toLowerCase())&&a.length<40){a.push(text.toLowerCase());save();train()}}
     const r=H[c.label]();if(r)return r}
-  return wiki(ct(text).join(' ')||text).then(r=>{if(!r||!r.s.length)throw 0;mem.studied[r.title]={s:r.s};save();return[[askStudied(text)||r.s.slice(0,2).join(' '),'sv-SE']]})
+  return wiki(ct(text).join(' ')||text).then(r=>{if(!r||r.off||!r.s.length)throw 0;mem.studied[r.title]={s:r.s};save();return[[askStudied(text)||r.s.slice(0,2).join(' '),'sv-SE']]})
     .catch(()=>{pending=text.toLowerCase();return'I do not know that yet, '+who()+'. What should I answer?'});
 }
 /* ---------- voice out (British) ---------- */
