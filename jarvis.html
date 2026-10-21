@@ -227,9 +227,9 @@ async function wiki(topic,deep){
   return{title:first,s:all.slice(0,deep?220:40),n:used,off,l:'en-GB'};
 }
 const near=(a,b)=>a.startsWith(b.slice(0,5))||b.startsWith(a.slice(0,5));
-function askStudied(q){
+function askStudied(q,only){
   const qw=ct(q);if(!qw.length)return null;
-  const all=[];for(const k in mem.studied)mem.studied[k].s.forEach((x,i)=>all.push({k,i,w:ct(x)}));
+  const all=[];for(const k in mem.studied)if(!only||k==only)mem.studied[k].s.forEach((x,i)=>all.push({k,i,w:ct(x)}));
   if(!all.length)return null;
   const df={};qw.forEach(w=>df[w]=all.filter(x=>x.w.some(y=>near(y,w))).length);
   let best=null,bs=0;
@@ -240,7 +240,7 @@ function askStudied(q){
   last={k:best.k,i:best.i};
   return mem.studied[best.k].s.slice(best.i,best.i+2).join(' ');
 }
-let conv=false,last=null;
+let conv=true,last=null;
 const lg=k=>mem.studied[k]&&mem.studied[k].l||'sv-SE';
 let pending=null;
 function think(raw){
@@ -249,6 +249,7 @@ function think(raw){
   if((m=/^lär dig:?\s*(.+?)\s*(?:=>?|->|\bbetyder\b|\bsvara\b|\bsvaret är\b)\s*(.+)$/i.exec(text))){
     mem.taught=mem.taught.filter(t=>t.q!==m[1].toLowerCase());mem.taught.push({q:m[1].toLowerCase(),a:m[2]});save();return'Understood. I have learned that.'}
   if(/^(berätta mer|fortsätt|mer)$/i.test(text)){if(!last)return'More about what, '+who()+'?';last.i+=2;const x=mem.studied[last.k].s.slice(last.i,last.i+2);return x.length?[[x.join(' '),lg(last.k)]]:'That is everything I have on that, '+who()+'.'}
+  if(/^(tyst|sluta lyssna|stopp)$/i.test(text)){conv=false;return'Very well. Tap the circle when you need me.'}
   if((m=/^konversationsläge\s*(på|av)/i.exec(text))){conv=m[1].toLowerCase()=='på';return conv?'Conversation mode on. I will keep listening.':'Conversation mode off.'}
   if((m=/^(?:vad vet du om|berätta om|berätta för mig om)\s+(.+)/i.exec(text))){
     const key=m[1].toLowerCase().replace(/[^a-zåäö0-9\s]/g,'').trim();
@@ -260,7 +261,7 @@ function think(raw){
   if((m=/^(?:studera|undersök|lär dig om|läs på om)\s+(.+)/i.exec(text)))
     return wiki(m[1],true).then(r=>{if(!r||!r.s.length)return'I could not find anything on that, '+who()+'.';
       mem.studied[r.title]={s:r.s,l:r.l};save();
-      return[[`${r.off?'I found no exact match, so I studied the closest one. ':''}Study complete, ${who()}. I have read ${r.n} articles, ${r.s.length} facts, about `,'en-GB'],[r.title+'. ',r.l]]})
+      last={k:r.title,i:1};return[[`${r.off?'I found no exact match, so I studied the closest one. ':''}I have read ${r.n} articles on ${r.title}. `,'en-GB'],[r.s.slice(0,3).join(' '),r.l]]})
       .catch(()=>'I cannot reach the internet, '+who()+'.');
   if(/vad har du (studerat|lärt dig)|^vad vet du\s*$/i.test(text)){const k=Object.keys(mem.studied);return k.length?[['I have studied: ','en-GB'],[k.join(', ')+'. ','en-GB']]:'I have not studied anything yet, '+who()+'.'}
   if(/^(glöm allt|rensa minnet|glöm vad jag sa)/i.test(text)){mem.facts=[];mem.taught=[];mem.extra={};mem.studied={};save();train();return'Memory cleared, '+who()+'.'}
@@ -272,11 +273,12 @@ function think(raw){
   const tk=tok(text);let bt=null,bs=0;
   mem.taught.forEach(t=>{const s=jac(tk,tok(t.q));if(s>bs){bs=s;bt=t}});
   if(bt&&bs>=.55)return[[bt.a,sv(bt.a)]];
+  if(last&&/\b(han|hon|den|det|dem|de|där|henne|honom|dess)\b/i.test(text)){const a=askStudied(text,last.k);if(a)return[[a,lg(last.k)]]}
   const kb=askKB(text);if(kb)return kb;const stu=askStudied(text);if(stu)return[[stu,lg(last.k)]];const c=classify(text);
   if(c&&c.p>.5&&H[c.label]){
     if(c.p>.9){const a=mem.extra[c.label]=mem.extra[c.label]||[];if(!a.includes(text.toLowerCase())&&a.length<40){a.push(text.toLowerCase());save();train()}}
     const r=H[c.label]();if(r)return r}
-  return wiki(ct(text).join(' ')||text).then(r=>{if(!r||r.off||!r.s.length)throw 0;mem.studied[r.title]={s:r.s,l:r.l};save();{const a=askStudied(text);return a?[[a,lg(last.k)]]:[[r.s.slice(0,2).join(' '),r.l]]}})
+  return wiki(ct(text).join(' ')||text).then(r=>{if(!r||r.off||!r.s.length)throw 0;mem.studied[r.title]={s:r.s,l:r.l};save();{const a=askStudied(text);return a?[[a,lg(last.k)]]:(last={k:r.title,i:0},[[r.s.slice(0,2).join(' '),r.l]])}})
     .catch(()=>{pending=text.toLowerCase();return'I do not know that yet, '+who()+'. What should I answer?'});
 }
 /* ---------- voice out (British) ---------- */
@@ -305,7 +307,7 @@ function listen(){
   const rec=new SR();rec.lang='sv-SE';rec.interimResults=false;rec.maxAlternatives=1;
   rec.onstart=()=>set('listen');
   rec.onresult=e=>handle(e.results[0][0].transcript);
-  rec.onerror=e=>set('idle',e.error=='not-allowed'?'GE MIKROFONEN TILLÅTELSE I SAFARI':'HÖRDE INGET, TRYCK IGEN');
+  rec.onerror=e=>conv&&e.error=='no-speech'?setTimeout(listen,300):set('idle',e.error=='not-allowed'?'GE MIKROFONEN TILLÅTELSE I SAFARI':'HÖRDE INGET, TRYCK IGEN');
   rec.onend=()=>{if(state=='listen')set('idle')};
   try{rec.start()}catch(e){}
 }
