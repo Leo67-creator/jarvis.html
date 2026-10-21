@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="sv"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>J.A.R.V.I.S</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:#040a12;color:#bfefff;font-family:'Rajdhani',system-ui,sans-serif;overflow:hidden;color-scheme:dark}
+body{display:flex;flex-direction:column;background:radial-gradient(ellipse at 50% 42%,#0b2536 0,#040a12 70%);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;background:linear-gradient(rgba(63,210,255,.045) 1px,transparent 1px) 0 0/44px 44px,linear-gradient(90deg,rgba(63,210,255,.045) 1px,transparent 1px) 0 0/44px 44px}
+header{text-align:center;padding:14px 0 0;font-family:'Orbitron',sans-serif;font-weight:700;letter-spacing:.5em;font-size:13px;color:#3fd2ff;text-shadow:0 0 12px #3fd2ff;position:relative}
+main{flex:1;position:relative;min-height:0}
+canvas{position:absolute;inset:0;width:100%;height:100%;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#info{position:absolute;left:0;right:0;bottom:6px;text-align:center;pointer-events:none;padding:0 20px}
+#status{font-family:'Orbitron',sans-serif;font-size:12px;letter-spacing:.18em;color:#3fd2ff;text-shadow:0 0 8px #3fd2ff}
+#heard{margin-top:6px;font-size:17px;color:#7fb9cc;min-height:22px;font-weight:500}
+footer{padding:10px 16px 14px;position:relative}
+.box{position:relative;border:1px solid rgba(63,210,255,.45);background:rgba(8,28,42,.6);box-shadow:0 0 18px rgba(63,210,255,.15) inset,0 0 14px rgba(63,210,255,.12)}
+.box::before,.box::after{content:"";position:absolute;width:14px;height:14px;border:2px solid #3fd2ff}
+.box::before{top:-3px;left:-3px;border-right:0;border-bottom:0}
+.box::after{bottom:-3px;right:-3px;border-left:0;border-top:0}
+input{width:100%;background:transparent;border:0;outline:0;color:#e6fbff;font:600 20px 'Rajdhani',system-ui,sans-serif;padding:14px 16px;caret-color:#3fd2ff}
+input::placeholder{color:#3b7a91}
+.box:focus-within{border-color:#8fe8ff;box-shadow:0 0 22px rgba(63,210,255,.3) inset,0 0 20px rgba(63,210,255,.25)}
+</style></head>
+<body>
+<header>J.A.R.V.I.S</header>
+<main>
+<canvas id="c"></canvas>
+<div id="info"><div id="status">REDO</div><div id="heard"></div></div>
+</main>
+<footer><div class="box"><input id="in" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="off" placeholder="Skriv ett kommando…"></div></footer>
+<script>
+const $=s=>document.querySelector(s);
+/* ---------- memory ---------- */
+const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+let mem=Object.assign({facts:[],taught:[],name:null,extra:{}},store.get('jv_mem',{}));
+const save=()=>store.set('jv_mem',mem);
+const born=Date.now();
+/* ---------- the brain: naive Bayes intent classifier trained on my own examples ---------- */
+const SEED={
+greet:["hej","hallå","tjena","god morgon","hej jarvis","hallå där","god kväll","hejsan","tja"],
+time:["vad är klockan","hur mycket är klockan","klockan","vad är tiden","säg tiden","vad har vi för tid"],
+date:["vilken dag är det","vad är det för datum","vilket datum är det idag","vad är det för dag idag","datum","vilken dag är det idag"],
+recall:["vad minns du","vad har jag sagt åt dig att komma ihåg","läs upp mina anteckningar","vad har du sparat","visa mina anteckningar","vad har du för minnen"],
+joke:["berätta ett skämt","säg något roligt","skämta","gör mig glad","kan du skämta","ett skämt"],
+who:["vem är du","vad heter du","vad är du","presentera dig","vem har skapat dig","vem byggde dig"],
+how:["hur mår du","hur är läget","läget","hur går det","vad händer"],
+thanks:["tack","tack så mycket","tackar","tack jarvis","snyggt jobbat","bra jobbat"],
+status:["status","systemstatus","hur går det för systemet","rapportera","statusrapport","kör diagnostik"],
+bye:["hejdå","vi hörs","godnatt","adjö","hej då","vi ses","hörs senare"],
+help:["hjälp","vad kan du göra","vilka kommandon finns","vad kan du","hur funkar du"],
+unknown_math:["vad är num plus num","räkna ut num gånger num","hur mycket är num delat med num","vad blir num minus num"]
+};
+const tok=s=>s.toLowerCase().replace(/\d+([.,]\d+)?/g,' num ').replace(/[^a-zåäöé\s]/g,' ').split(/\s+/).filter(Boolean);
+let NB;
+function train(){
+  const cls={},vocab=new Set();let docs=0;
+  for(const k in SEED){const all=SEED[k].concat(mem.extra[k]||[]);cls[k]={n:all.length,c:{},tot:0};docs+=all.length;
+    all.forEach(x=>tok(x).forEach(w=>{cls[k].c[w]=(cls[k].c[w]||0)+1;cls[k].tot++;vocab.add(w)}))}
+  NB={cls,vocab,docs};
+}
+function classify(text){
+  const ws=tok(text).filter(w=>NB.vocab.has(w));if(!ws.length)return null;
+  const sc={};let max=-1e9;
+  for(const k in NB.cls){const c=NB.cls[k];let lp=Math.log(c.n/NB.docs);
+    ws.forEach(w=>lp+=Math.log(((c.c[w]||0)+.3)/(c.tot+.3*NB.vocab.size)));sc[k]=lp;if(lp>max)max=lp}
+  let sum=0;for(const k in sc){sc[k]=Math.exp(sc[k]-max);sum+=sc[k]}
+  let best=null,p=0;for(const k in sc){const q=sc[k]/sum;if(q>p){p=q;best=k}}
+  return{label:best,p};
+}
+train();
+/* ---------- skills ---------- */
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+const who=()=>mem.name||'sir';
+const tod=()=>{const h=new Date().getHours();return h<12?'morning':h<18?'afternoon':'evening'};
+const sv=x=>/[åäö]|\b(och|jag|det|är|att|inte|som|ett|på|med|du|min|mitt)\b/i.test(x)?'sv-SE':'en-GB';
+function calc(s){let i=0;const ws=()=>{while(s[i]==' ')i++};
+  function num(){ws();const m=/^\d+(\.\d+)?/.exec(s.slice(i));if(m){i+=m[0].length;return parseFloat(m[0])}
+    if(s[i]=='('){i++;const v=add();ws();if(s[i]!=')')throw 0;i++;return v}
+    if(s[i]=='-'){i++;return -num()}throw 0}
+  function pow(){const b=num();ws();if(s[i]=='^'){i++;return Math.pow(b,pow())}return b}
+  function mul(){let v=pow();for(;;){ws();const c=s[i];if(c=='*'){i++;v*=pow()}else if(c=='/'){i++;v/=pow()}else return v}}
+  function add(){let v=mul();for(;;){ws();const c=s[i];if(c=='+'){i++;v+=mul()}else if(c=='-'){i++;v-=mul()}else return v}}
+  const r=add();ws();if(i<s.length)throw 0;return r}
+function mathRule(raw){
+  let t=raw.toLowerCase().replace(/(\d),(\d)/g,'$1.$2')
+   .replace(/kvadratroten ur (\d+(\.\d+)?)/g,(m,n)=>Math.sqrt(+n))
+   .replace(/plus/g,'+').replace(/minus/g,'-').replace(/gånger|multiplicerat med|\bx\b/g,'*')
+   .replace(/delat på|delat med|dividerat med/g,'/').replace(/upphöjt till|upphöjt i/g,'^');
+  t=t.replace(/[^0-9+\-*/^().\s]/g,' ').trim();
+  if(!/\d/.test(t)||!/[+\-*/^]|\d\.\d/.test(t)&&!/^\d+(\.\d+)?$/.test(t))return null;
+  if(!/[+\-*/^]/.test(t)&&!/kvadratroten/i.test(raw))return null;
+  try{const r=calc(t);if(!isFinite(r))return'Division by zero is not permitted, sir. Not even for me.';return`That comes to ${+r.toFixed(6)}, ${who()}.`}catch(e){return null}
+}
+const timers=[];
+function timerRule(raw){
+  const m=/(\d+)\s*(sekund\w*|sek\b|minut\w*|min\b|timm\w*|tim\b)/i.exec(raw);
+  if(!m||!/timer|väck|påminn|nedräkning/i.test(raw))return null;
+  const n=+m[1],u=m[2].toLowerCase();
+  const [ms,name]=/^s/.test(u)?[1e3,'second']:/^m/.test(u)?[6e4,'minute']:[36e5,'hour'];
+  const label=n+' '+name+(n==1?'':'s');
+  timers.push(setTimeout(()=>speak(`${who()}, your ${label} timer has finished.`),n*ms));
+  return`Timer set for ${label}, ${who()}.`;
+}
+const JOKES=["I would tell you a UDP joke, but you might not get it.","There are ten kinds of people: those who understand binary and those who do not.","I tried to catch some fog earlier. I mist.","A SQL query walks into a bar, approaches two tables and asks: may I join you?","I would make a joke about recursion, but first I would have to make a joke about recursion."];
+const H={
+ greet:()=>pick([`Good ${tod()}, ${who()}.`,`Hello, ${who()}. At your service.`,`Welcome back, ${who()}.`]),
+ time:()=>`The time is ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}, ${who()}.`,
+ date:()=>`Today is ${new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}.`,
+ recall:()=>{if(!mem.facts.length)return'I have nothing stored yet, '+who()+'.';
+   return[[`I am holding ${mem.facts.length} note${mem.facts.length>1?'s':''}. `,'en-GB'],...mem.facts.map(f=>[f+'. ',sv(f)])]},
+ joke:()=>pick(JOKES),
+ who:()=>'I am JARVIS. Every line of me was written from scratch on this page. No outside AI, just my own code and memory.',
+ how:()=>`All systems running at full capacity. And you, ${who()}?`,
+ thanks:()=>`You are most welcome, ${who()}.`,
+ status:()=>`All systems nominal. Uptime ${Math.max(1,Math.round((Date.now()-born)/6e4))} minutes. I know ${NB.vocab.size} words, ${mem.facts.length} notes and ${mem.taught.length} taught answers.`,
+ bye:()=>`Goodbye, ${who()}. Standing by.`,
+ help:()=>[['I can tell the time and date, calculate, set timers, keep notes, and learn from you. To teach me, say ','en-GB'],['lär dig, din fråga, betyder, mitt svar.','sv-SE']],
+ unknown_math:()=>null
+};
+const jac=(a,b)=>{const A=new Set(a),B=new Set(b);let i=0;A.forEach(x=>B.has(x)&&i++);return i/(A.size+B.size-i||1)};
+/* ---------- built-in knowledge base ---------- */
+const CAPS=[["sverige","Sweden","Stockholm"],["norge","Norway","Oslo"],["danmark","Denmark","Copenhagen"],["finland","Finland","Helsinki"],["island","Iceland","Reykjavik"],["frankrike","France","Paris"],["tyskland","Germany","Berlin"],["italien","Italy","Rome"],["spanien","Spain","Madrid"],["portugal","Portugal","Lisbon"],["storbritannien|england","the United Kingdom","London"],["irland","Ireland","Dublin"],["nederländerna|holland","the Netherlands","Amsterdam"],["belgien","Belgium","Brussels"],["schweiz","Switzerland","Bern"],["österrike","Austria","Vienna"],["polen","Poland","Warsaw"],["grekland","Greece","Athens"],["turkiet","Turkey","Ankara"],["ryssland","Russia","Moscow"],["ukraina","Ukraine","Kyiv"],["usa|amerika|förenta","the United States","Washington D.C."],["kanada","Canada","Ottawa"],["mexiko","Mexico","Mexico City"],["brasilien","Brazil","Brasilia"],["argentina","Argentina","Buenos Aires"],["kina","China","Beijing"],["japan","Japan","Tokyo"],["sydkorea","South Korea","Seoul"],["indien","India","New Delhi"],["thailand","Thailand","Bangkok"],["australien","Australia","Canberra"],["egypten","Egypt","Cairo"]];
+const KB=CAPS.map(([s,n,c])=>[["huvudstad",s],`The capital of ${n} is ${c}.`]).concat([
+[["ljus","hastighet"],"Light travels at about 299,792 kilometres per second."],
+[["snabbt|fort","ljus"],"Light travels at about 299,792 kilometres per second."],
+[["ljud","hastighet"],"Sound travels at about 343 metres per second in air."],
+[["avstånd|långt","jorden","solen"],"The Earth is about 150 million kilometres from the Sun."],
+[["avstånd|långt","jorden","månen"],"The Moon is about 384,000 kilometres from Earth."],
+[["många","planet"],"There are eight planets in the solar system."],
+[["störst","planet"],"Jupiter is the largest planet."],
+[["minst","planet"],"Mercury is the smallest planet."],
+[["varmast","planet"],"Venus is the hottest planet, around 465 degrees Celsius."],
+[["närmast","solen"],"Mercury is the closest planet to the Sun."],
+[["gammal","jorden"],"The Earth is about 4.5 billion years old."],
+[["gammal","universum"],"The universe is about 13.8 billion years old."],
+[["kemisk|formel","vatten"],"Water is H2O: two hydrogen atoms and one oxygen atom."],
+[["kokpunkt|koka|kokar","vatten"],"Water boils at 100 degrees Celsius at sea level."],
+[["fryspunkt|fryser","vatten"],"Water freezes at zero degrees Celsius."],
+[["kemisk","guld"],"The chemical symbol for gold is Au."],
+[["många","ben","kroppen|människa|vuxen"],"An adult human has 206 bones."],
+[["många","kammare|rum","hjärta"],"The human heart has four chambers."],
+[["snabbast","djur"],"On land the cheetah is fastest, up to about 110 kilometres per hour. The peregrine falcon is fastest overall, over 300 in a dive."],
+[["störst","djur"],"The blue whale is the largest animal known to have lived."],
+[["störst","hav|ocean"],"The Pacific Ocean is the largest ocean."],
+[["längst","flod"],"The Nile is traditionally the longest river, about 6,650 kilometres, though some measure the Amazon as longer."],
+[["högsta|högst","berg"],"Mount Everest, at 8,849 metres above sea level."],
+[["djupast","hav|ocean|punkt|ställe"],"The Mariana Trench, about 11 kilometres deep."],
+[["störst","land"],"Russia is the largest country by area."],
+[["minst","land"],"Vatican City is the smallest country."],
+[["flest","invånare|människor|befolkning"],"India has the largest population, having passed China in 2023."],
+[["många","kontinent"],"There are seven continents."],
+[["många","hav|ocean"],"Five oceans: the Pacific, Atlantic, Indian, Southern and Arctic."],
+[["störst","öken"],"Antarctica is the largest desert, and the Sahara is the largest hot desert."],
+[["högsta|högst","byggnad|skyskrapa|hus"],"The Burj Khalifa in Dubai, at 828 metres, as far as I know."],
+[["billigast","bil"],"The Tata Nano was long known as the cheapest car in the world, launched at about 2,000 dollars. Production ended in 2020."],
+[["pi="],"Pi is roughly 3.14159."],
+[["tyngdacceleration|gravitation|tyngdkraft"],"Gravity on Earth accelerates objects at 9.81 metres per second squared."],
+[["många","dagar","år=|året"],"365 days, or 366 in a leap year."],
+[["många","minuter","dygn|dag|dygnet"],"There are 1,440 minutes in a day."],
+[["många","färger","regnbåge"],"A rainbow has seven colours."],
+[["första","världskrig"],"The First World War lasted from 1914 to 1918."],
+[["andra","världskrig"],"The Second World War lasted from 1939 to 1945."],
+[["berlinmur"],"The Berlin Wall fell on the ninth of November 1989."],
+[["först","månen"],"Neil Armstrong, during Apollo 11 in 1969."],
+[["uppfann","telefon"],"Alexander Graham Bell is credited with the telephone, in 1876."],
+[["uppfann","glödlampa"],"Thomas Edison made the first commercially practical light bulb, in 1879."],
+[["uppfann|skapade","internet|webben|www"],"The web was invented by Tim Berners-Lee in 1989. The internet grew out of ARPANET in 1969."],
+[["skapade|skrev|uppfann","python"],"Python was created by Guido van Rossum, first released in 1991."],
+[["skapade|skrev|uppfann","linux"],"Linux was created by Linus Torvalds in 1991."],
+[["första","programmerare"],"Ada Lovelace is regarded as the first programmer."],
+[["mona","lisa"],"Leonardo da Vinci painted the Mona Lisa."],
+[["skrev","hamlet"],"William Shakespeare wrote Hamlet."],
+[["relativitetsteori"],"The theory of relativity was developed by Albert Einstein."],
+[["penicillin"],"Penicillin was discovered by Alexander Fleming in 1928."],
+[["språk","flest|mest","talas|pratas"],"Mandarin has the most native speakers, and English has the most speakers overall."],
+[["många","invånare|bor","sverige"],"Around 10.5 million people live in Sweden."],
+[["högsta|högst","berg","sverige"],"Kebnekaise, at about 2,100 metres."],
+[["störst","sjö","sverige"],"Lake Vanern is the largest lake in Sweden."],
+[["störst","stad","sverige"],"Stockholm is the largest city in Sweden, followed by Gothenburg."],
+[["nationaldag","sverige"],"The national day of Sweden is the sixth of June."],
+[["kung","sverige"],"The king of Sweden is Carl the Sixteenth Gustaf, as far as I know."],
+[["sverige","nato"],"Sweden joined NATO in March 2024."],
+[["sverige","eu="],"Sweden joined the European Union in 1995."],
+[["grundade|startade|skapade","ikea"],"IKEA was founded by Ingvar Kamprad in 1943, in Almhult."],
+[["grundade|startade|skapade","spotify"],"Spotify was founded by Daniel Ek and Martin Lorentzon in 2006."],
+[["skapade|gjorde|uppfann","minecraft"],"Markus Persson, known as Notch, released Minecraft in 2009. Microsoft bought it in 2014."],
+[["grundade|startade","volvo"],"Volvo was founded in Gothenburg in 1927."],
+[["nobelpris"],"The Nobel Prize was founded by Alfred Nobel. It is awarded in Stockholm, except the Peace Prize, which is awarded in Oslo."],
+[["skrev|författare","pippi"],"Pippi Longstocking was written by Astrid Lindgren."],
+[["abba"],"ABBA is a Swedish pop group from Stockholm. They won Eurovision in 1974 with Waterloo."]
+]);
+function askKB(q){
+  const T=q.toLowerCase().replace(/[^a-zåäöé0-9\s]/g,' ').split(/\s+/).filter(Boolean);
+  let best=null,bs=0;
+  for(const [st,a] of KB){let s=0,ok=true;
+    for(const x of st){let hit=false;
+      for(const al of x.split('|')){const ex=al.endsWith('=');const w=ex?al.slice(0,-1):al;if(T.some(t=>ex?t==w:t.startsWith(w))){hit=true;s+=w.length;break}}
+      if(!hit){ok=false;break}}
+    if(ok&&s+st.length*10>bs){bs=s+st.length*10;best=a}}
+  return best;
+}
+let pending=null;
+function think(raw){
+  const text=raw.trim();let m;
+  if(pending){const q=pending;pending=null;if(/^(nej|avbryt|glöm det|strunta i det)$/i.test(text))return'Very well, '+who()+'.';mem.taught.push({q,a:text});save();return'Learned. Ask me again and I will answer.'}
+  if((m=/^lär dig:?\s*(.+?)\s*(?:=>?|->|\bbetyder\b|\bsvara\b|\bsvaret är\b)\s*(.+)$/i.exec(text))){
+    mem.taught=mem.taught.filter(t=>t.q!==m[1].toLowerCase());mem.taught.push({q:m[1].toLowerCase(),a:m[2]});save();return'Understood. I have learned that.'}
+  if(/^(glöm allt|rensa minnet|glöm vad jag sa)/i.test(text)){mem.facts=[];mem.taught=[];mem.extra={};save();train();return'Memory cleared, '+who()+'.'}
+  if((m=/^(?:kom ihåg|minns|spara)(?: att)?\s+(.+)/i.exec(text))){mem.facts.push(m[1]);save();return`Noted, ${who()}. I will remember that.`}
+  if((m=/(?:jag heter|mitt namn är)\s+([a-zåäö\-]+)/i.exec(text))){mem.name=m[1][0].toUpperCase()+m[1].slice(1);save();return`Pleasure to meet you, ${mem.name}.`}
+  if(/vad heter jag/i.test(text))return mem.name?`Your name is ${mem.name}.`:'You have not told me yet.';
+  const tm=timerRule(text);if(tm)return tm;
+  const mr=mathRule(text);if(mr)return mr;
+  const tk=tok(text);let bt=null,bs=0;
+  mem.taught.forEach(t=>{const s=jac(tk,tok(t.q));if(s>bs){bs=s;bt=t}});
+  if(bt&&bs>=.55)return[[bt.a,sv(bt.a)]];
+  const kb=askKB(text);if(kb)return kb;const c=classify(text);
+  if(c&&c.p>.5&&H[c.label]){
+    if(c.p>.9){const a=mem.extra[c.label]=mem.extra[c.label]||[];if(!a.includes(text.toLowerCase())&&a.length<40){a.push(text.toLowerCase());save();train()}}
+    const r=H[c.label]();if(r)return r}
+  pending=text.toLowerCase();return'I do not know that yet, '+who()+'. What should I answer?';
+}
+/* ---------- voice out (British) ---------- */
+let spk=0;
+function speak(p){
+  const sy=speechSynthesis;sy.cancel();const id=++spk;
+  if(typeof p=='string')p=[[p,'en-GB']];
+  const vs=sy.getVoices();
+  p.forEach(([x,l],i)=>{const u=new SpeechSynthesisUtterance(x);u.lang=l;
+    const v=l=='en-GB'?(vs.find(v=>/en[-_]GB/i.test(v.lang)&&/daniel|arthur|oliver|male/i.test(v.name))||vs.find(v=>/en[-_]GB/i.test(v.lang))):vs.find(v=>/sv[-_]SE/i.test(v.lang));
+    if(v)u.voice=v;u.rate=.98;u.pitch=l=='en-GB'?.85:1;
+    if(i==0)u.onstart=()=>id==spk&&set('speak');
+    if(i==p.length-1)u.onend=u.onerror=()=>id==spk&&set('idle');
+    sy.speak(u)});
+}
+/* ---------- voice in (Swedish) ---------- */
+function handle(raw){
+  if(!raw||!raw.trim())return;
+  $('#heard').textContent=raw;set('think');
+  setTimeout(()=>{let r;try{r=think(raw)}catch(e){r='Something went wrong in my own code, '+who()+'.'}speak(r)},180);
+}
+function listen(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){set('idle','RÖSTINMATNING SAKNAS HÄR, SKRIV ISTÄLLET');return}
+  speechSynthesis.cancel();spk++;
+  const rec=new SR();rec.lang='sv-SE';rec.interimResults=false;rec.maxAlternatives=1;
+  rec.onstart=()=>set('listen');
+  rec.onresult=e=>handle(e.results[0][0].transcript);
+  rec.onerror=e=>set('idle',e.error=='not-allowed'?'GE MIKROFONEN TILLÅTELSE I SAFARI':'HÖRDE INGET, TRYCK IGEN');
+  rec.onend=()=>{if(state=='listen')set('idle')};
+  try{rec.start()}catch(e){}
+}
+$('#in').addEventListener('keydown',e=>{if(e.key=='Enter'){const v=e.target.value;e.target.value='';handle(v)}});
+/* ---------- HUD ---------- */
+const cv=$('#c'),g=cv.getContext('2d');let W,H2,dpr;
+function size(){dpr=devicePixelRatio||1;W=cv.clientWidth;H2=cv.clientHeight;cv.width=W*dpr;cv.height=H2*dpr;g.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',size);size();
+let state='idle',energy=.2,t=0;
+const LABEL={idle:'REDO',listen:'LYSSNAR',think:'TÄNKER',speak:'TALAR'};
+function set(s,label){state=s;$('#status').textContent=label||LABEL[s]}
+cv.addEventListener('click',()=>{if(state=='speak'){speechSynthesis.cancel();spk++;set('idle')}else if(state!='listen'&&state!='think')listen()});
+const C=a=>`rgba(63,210,255,${a})`;
+function arc(r,a0,a1,w,a,dash){g.beginPath();g.setLineDash(dash||[]);g.lineWidth=w;g.strokeStyle=C(a);g.arc(0,0,r,a0,a1);g.stroke();g.setLineDash([])}
+function draw(){
+  g.clearRect(0,0,W,H2);const R=Math.min(W,H2*1.05)*.3,sp={idle:.3,listen:1.1,think:2.8,speak:.9}[state];
+  g.save();g.translate(W/2,H2*.47);g.shadowColor='#3fd2ff';g.shadowBlur=14;
+  const gr=g.createRadialGradient(0,0,R*.04,0,0,R*1.3);
+  gr.addColorStop(0,`rgba(215,248,255,${.6+energy*.4})`);gr.addColorStop(.22,C(.25+energy*.35));gr.addColorStop(1,C(0));
+  g.fillStyle=gr;g.beginPath();g.arc(0,0,R*1.3,0,7);g.fill();
+  arc(R*1.0,0,7,1.5,.55);
+  g.save();g.rotate(t*sp*.25);for(let i=0;i<120;i++){const a=i/120*6.2832,L=i%5?6:13;g.beginPath();g.lineWidth=i%5?1:2;g.strokeStyle=C(i%5?.35:.7);g.moveTo(Math.cos(a)*R*.93,Math.sin(a)*R*.93);g.lineTo(Math.cos(a)*(R*.93-L),Math.sin(a)*(R*.93-L));g.stroke()}g.restore();
+  g.save();g.rotate(-t*sp*.45);for(let i=0;i<8;i++){const a=i/8*6.2832;arc(R*.72,a+.06,a+.7,9,.75)}g.restore();
+  g.save();g.rotate(t*sp*.7);arc(R*.58,0,7,3,.5,[3,9]);arc(R*.52,0,7,1,.6);g.restore();
+  g.save();g.rotate(t*sp*.2);for(let i=0;i<10;i++){g.save();g.rotate(i/10*6.2832);const k=.55+.45*Math.sin(t*3+i*.7)*energy;g.fillStyle=C(.35+.45*k);g.fillRect(R*.27,-R*.045,R*.2,R*.09);g.restore()}g.restore();
+  const cr=R*(.19+energy*.06),cg=g.createRadialGradient(0,0,0,0,0,cr*1.6);
+  cg.addColorStop(0,'rgba(255,255,255,1)');cg.addColorStop(.45,'rgba(150,236,255,.95)');cg.addColorStop(1,C(0));
+  g.fillStyle=cg;g.beginPath();g.arc(0,0,cr*1.6,0,7);g.fill();
+  if(state=='listen')for(let k=0;k<3;k++){const p=(t*.8+k/3)%1;arc(R*(1.02+p*.4),0,7,2,(1-p)*.6)}
+  if(state=='think'){arc(R*1.1,t*5,t*5+1.3,4,.95);arc(R*1.1,t*5+3.14,t*5+4.4,4,.5)}
+  if(state=='speak'){g.beginPath();g.lineWidth=2;g.strokeStyle=C(.85);for(let i=0;i<=120;i++){const a=i/120*6.2832,r=R*1.12+Math.sin(a*7+t*9)*Math.sin(a*3-t*4)*energy*16;i?g.lineTo(Math.cos(a)*r,Math.sin(a)*r):g.moveTo(Math.cos(a)*r,Math.sin(a)*r)}g.closePath();g.stroke()}
+  g.restore();
+}
+function frame(){t+=.016;const tg={idle:.2,listen:.7,think:.5,speak:.55+.4*Math.abs(Math.sin(t*11)*Math.sin(t*4.7))}[state];energy+=(tg-energy)*.09;draw();requestAnimationFrame(frame)}
+frame();
+</script></body></html>
