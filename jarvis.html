@@ -37,6 +37,7 @@ const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v)
 let mem=Object.assign({facts:[],taught:[],name:null,extra:{},studied:{}},store.get('jv_mem',{}));
 const save=()=>store.set('jv_mem',mem);
 for(const k in mem.studied)if(!mem.studied[k].l)delete mem.studied[k];
+if(mem.v!==2){mem.taught=[];mem.extra={};mem.v=2;save()}
 const born=Date.now();
 /* ---------- the brain: naive Bayes intent classifier trained on my own examples ---------- */
 const SEED={
@@ -279,7 +280,7 @@ function think(raw){
     if(c.p>.9){const a=mem.extra[c.label]=mem.extra[c.label]||[];if(!a.includes(text.toLowerCase())&&a.length<40){a.push(text.toLowerCase());save();train()}}
     const r=H[c.label]();if(r)return r}
   return wiki(ct(text).join(' ')||text).then(r=>{if(!r||r.off||!r.s.length)throw 0;mem.studied[r.title]={s:r.s,l:r.l};save();{const a=askStudied(text);return a?[[a,lg(last.k)]]:(last={k:r.title,i:0},[[r.s.slice(0,2).join(' '),r.l]])}})
-    .catch(()=>{pending=text.toLowerCase();return'I do not know that yet, '+who()+'. What should I answer?'});
+    .catch(()=>'I could not find that online, '+who()+'. Try asking it another way.');
 }
 /* ---------- voice out (British) ---------- */
 let spk=0;
